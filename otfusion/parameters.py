@@ -80,7 +80,7 @@ def get_parser():
     #================================= Add by us ============================================
     parser.add_argument('--experiment-dir', required=True, type=str)
     parser.add_argument('--prunint-rate', required=True, type=float)
-    parser.add_argument('--run-mode', required=True, type=str,choices=['finetune','lottery','prune', 'benchmark','prune_times'])
+    parser.add_argument('--run-mode', required=True, type=str,choices=['finetune','lottery','prune', 'benchmark','prune_times','benchmark_cross_mask'])
     parser.add_argument('--load-model-dir', required=True, type=str)
     parser.add_argument('--prune_times', default=4, type=int, help='number of epochs') 
     parser.add_argument('--finetunetimes_benchmark', default=0, type=int, help='fine-tune for benchmark') 

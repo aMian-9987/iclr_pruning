@@ -37,13 +37,29 @@ def extract_mask(model_dict):
 
     return new_dict
 
+#def combine_mask(model_dict,mask_dict):
+#    with torch.no_grad():
+#        for name,m in model.named_modules():
+ #           if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+#                mask_name = name+'.weight_mask'
+#                if mask_name in mask_dict.keys():
+#                    eval(f"model.{name}.weight_mask").set_(mask_dict[mask_name])
+ #               else:
+#                    print('Can not find [{}] in mask_dict'.format(mask_name))
+ #   return new_dict
+
 def check_zero(model_dict):
     print(model_dict.keys())
     for key, value in model_dict.items():
         print(f"the ratio of zero for {key}")
         print(1-torch.count_nonzero(value)/value.numel())
     
-    
+def stat_zero(mask_dict):
+    zero={}
+    for key in mask_dict.keys():
+        value=mask_dict[key]
+        zero[key]=1-torch.count_nonzero(value)/value.numel()    
+    return zero
 
 def pruning_model_local(model, px):
     #print('Apply Unstructured L1 Pruning Globally (all conv layers)')
@@ -53,14 +69,13 @@ def pruning_model_local(model, px):
             prune.l1_unstructured(m, 'weight', amount=px)
 
             
-            
-def pruning_model_local_row(model, px):
+def pruning_model_local_layer(model, px_dict):
     #print('Apply Unstructured L1 Pruning Globally (all conv layers)')
     parameters_to_prune =[]
     for name,m in model.named_modules():
+        mask_name = name+'.weight_mask'
         if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-            #循环列，得到m的mask
-            prune.l1_unstructured(m, 'weight', amount=px)
+            prune.l1_unstructured(m, 'weight', amount=px_dict[mask_name])         
             
             
 def pruning_model_global(model, px):
@@ -75,18 +90,6 @@ def pruning_model_global(model, px):
         pruning_method=prune.L1Unstructured,
         amount=px,
     )
-
-
-def prune_model_custom_manual(model, mask_dict):
-
-    #print('Pruning with custom mask (all conv layers)')
-    for name,m in model.named_modules():
-        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-            mask_name = name+'.weight_mask'
-            if mask_name in mask_dict.keys():
-                pass
-            else:
-                print('Can not find [{}] in mask_dict'.format(mask_name))
 
 def prune_model_custom(model, mask_dict):
 
@@ -236,8 +239,7 @@ if __name__ == '__main__':
         #print("========================================================")
         #print("accuracies",accuracies)
         #print("=========================================================")
-        
-    elif run_mode== 'benchmark':
+    elif run_mode== 'benchmark'or run_mode== 'benchmark_cross_mask':
         finetune_time = args.finetunetimes_benchmark
         # get dataloaders
         print("------- Obtain dataloaders -------")
@@ -285,23 +287,79 @@ if __name__ == '__main__':
             
 # >>>>>>> 702e4b159e4964754752a07e6e70f80b5c84b67d
             
+        if(run_mode== 'benchmark'):
+            for i in range(len(models)):            
+                model=models[i]
+                make_dir(f"./{experiment_dir}/origin_model")
+    # <<<<<<< HEAD
+                torch.save(model.state_dict(), f'./{experiment_dir}/origin_model/model{i}.model')
+                model_tem=deepcopy(model)
+                pruning_model_local(model_tem,args.prunint_rate)
+                make_dir(f"./{experiment_dir}/origin_mask")
+                torch.save(model_tem.state_dict(), f'./{experiment_dir}/origin_mask/model{i}.model')
+    # =======
+    #             torch.save(model.state_dict(), f'./model{i}.model')
+    #             model_tem=deepcopy(model)
+    #             pruning_model_local(model_tem,args.prunint_rate)
+    #             make_dir(f"./{experiment_dir}/origin_mask")
+    #             torch.save(model.state_dict(), f'/model{i}.model')
+    # >>>>>>> 702e4b159e4964754752a07e6>e70f80b5c84b67d
+        elif(run_mode == 'benchmark_cross_mask'):
+            mask_models=[]
+            for i in range(len(models)):            
+                model=models[i]
+                make_dir(f"./{experiment_dir}/origin_model")
+                torch.save(model.state_dict(), f'./{experiment_dir}/origin_model/model{i}.model')
+                model_tem=deepcopy(model)
+                pruning_model_local(model_tem,args.prunint_rate)
+                mask_models.append(model_tem)
+                
+            assert(len(mask_models)==2,"Now only valid for 2 models")
+            mask0,mask1=extract_mask(mask_models[0].state_dict()),extract_mask(mask_models[1].state_dict())
+            both_mask={}
+            for key in mask0.keys():
+                both_mask[key]=mask0[key]
+                both_mask[key][mask1[key] == 1]= 1
+            model_tem0,model_tem1=deepcopy(models[0]),deepcopy(models[1])
+            prune_model_custom(model_tem0,both_mask)
+            prune_model_custom(model_tem1,both_mask)
+            #prune_model_remove(model_tem0)
+            #prune_model_remove(model_tem1)
+            both_zero_rate=stat_zero(both_mask)
+            print("both_zero_rate",both_zero_rate)
+            """
+            both_zero_rate=stat_zero(both_mask)
+            new_zero_rate={}
+            print("both_zero_rate",both_zero_rate)
+            for key in both_zero_rate.keys():
+                new_zero_rate[key]=((args.prunint_rate-both_zero_rate[key])/2+both_zero_rate[key]).item()
+            print("new_zero_rate",new_zero_rate)
+                    
+            pruning_model_local_layer(model_tem0,new_zero_rate)
+            pruning_model_local_layer(model_tem1,new_zero_rate)
+            mask0,mask1=extract_mask(model_tem0.state_dict()),extract_mask(model_tem1.state_dict())
+            final_mask={}
+            for key in mask0.keys():
+                final_mask[key]=mask0[key]
+                final_mask[key][mask1[key] == 0]= 0
             
-        for i in range(len(models)):            
-            model=models[i]
-            make_dir(f"./{experiment_dir}/origin_model")
-# <<<<<<< HEAD
-            torch.save(model.state_dict(), f'./{experiment_dir}/origin_model/model{i}.model')
-            model_tem=deepcopy(model)
-            pruning_model_local(model_tem,args.prunint_rate)
-            make_dir(f"./{experiment_dir}/origin_mask")
-            torch.save(model_tem.state_dict(), f'./{experiment_dir}/origin_mask/model{i}.model')
-# =======
-#             torch.save(model.state_dict(), f'./model{i}.model')
-#             model_tem=deepcopy(model)
-#             pruning_model_local(model_tem,args.prunint_rate)
-#             make_dir(f"./{experiment_dir}/origin_mask")
-#             torch.save(model.state_dict(), f'/model{i}.model')
-# >>>>>>> 702e4b159e4964754752a07e6>e70f80b5c84b67d
+            model_tem0,model_tem1=deepcopy(models[0]),deepcopy(models[1])
+            prune_model_custom(model_tem0,final_mask)
+            prune_model_custom(model_tem1,final_mask)
+            print("===========================================")
+            print("===========================================")
+            print("Check final_mask")
+            print("===========================================")
+            print("===========================================")
+            check_zero(final_mask)
+            """
+            mask_models=[model_tem0,model_tem1]
+            
+            for i in range(len(mask_models)):
+                make_dir(f"./{experiment_dir}/origin_mask")
+                torch.save(mask_models[i].state_dict(), f'./{experiment_dir}/origin_mask/model{i}.model')
+            
+            
         with open(f"./{experiment_dir}/acc.json","w") as f:
             json.dump({
                 "accuracies":accuracies,
